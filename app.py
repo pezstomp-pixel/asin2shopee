@@ -25,25 +25,36 @@ from google import genai  # Gemini SDK [web:438]
 
 load_dotenv()
 
+def env(name: str) -> str:
+    """ローカル(.env)優先、なければ Streamlit secrets。"""
+    import streamlit as st
+    v = os.environ.get(name)
+    if v is not None:
+        return v
+    return st.secrets[name]
+
 gemini_client = genai.Client()  # GEMINI_API_KEY を環境変数から読む [web:437]
 
 
+gemini_client = genai.Client(api_key=env("GEMINI_API_KEY"))
+
 def get_dropbox_client():
     return dropbox.Dropbox(
-        oauth2_refresh_token=st.secrets["DROPBOX_REFRESH_TOKEN"],
-        app_key=st.secrets["DROPBOX_APP_KEY"],
-        app_secret=st.secrets["DROPBOX_APP_SECRET"],
+        oauth2_refresh_token=env("DROPBOX_REFRESH_TOKEN"),
+        app_key=env("DROPBOX_APP_KEY"),
+        app_secret=env("DROPBOX_APP_SECRET"),
     )
 
 def get_credentials():
     return dict(
-        refresh_token=st.secrets["SP_API_REFRESH_TOKEN"],
-        lwa_app_id=st.secrets["LWA_CLIENT_ID"],
-        lwa_client_secret=st.secrets["LWA_CLIENT_SECRET"],
-        aws_access_key=st.secrets["AWS_ACCESS_KEY"],
-        aws_secret_key=st.secrets["AWS_SECRET_KEY"],
-        role_arn=st.secrets["ROLE_ARN"],
+        refresh_token=env("SP_API_REFRESH_TOKEN"),
+        lwa_app_id=env("LWA_CLIENT_ID"),
+        lwa_client_secret=env("LWA_CLIENT_SECRET"),
+        aws_access_key=env("AWS_ACCESS_KEY"),
+        aws_secret_key=env("AWS_SECRET_KEY"),
+        role_arn=env("ROLE_ARN"),
     )
+
 
 
 # ---------------------------------------------------------
