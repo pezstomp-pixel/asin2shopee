@@ -515,8 +515,6 @@ def main():
                     error_placeholder.info(
                         f"{len(paths)}枚の画像と翻訳テキストを保存しました。"
                     )
-                    st.write(f"例: {paths[0]}")
-                    st.write(f"翻訳テキスト: {translation_path}")
 
                 except Exception as e:
                     error_placeholder.error(f"保存処理でエラーが発生しました: {e}")
