@@ -2,5 +2,5 @@ streamlit
 python-dotenv
 dropbox
 requests
-sp-api
+python-amazon-sp-api
 google-genai
