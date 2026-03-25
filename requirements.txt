@@ -1,0 +1,6 @@
+streamlit
+python-dotenv
+dropbox
+requests
+sp-api
+google-genai
