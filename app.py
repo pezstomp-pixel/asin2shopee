@@ -1,6 +1,6 @@
 import os
 import re
-from typing import Dict, Any, List, Tuple
+from typing import Dict, List, Tuple
 
 import requests
 from dotenv import load_dotenv
@@ -17,7 +17,7 @@ from config import (
     country_to_lang,
 )
 
-from google import genai  # Gemini SDK [web:438]
+from google import genai  # Gemini SDK
 
 # ---------------------------------------------------------
 # 設定
@@ -25,18 +25,17 @@ from google import genai  # Gemini SDK [web:438]
 
 load_dotenv()
 
+
 def env(name: str) -> str:
     """ローカル(.env)優先、なければ Streamlit secrets。"""
-    import streamlit as st
     v = os.environ.get(name)
     if v is not None:
         return v
     return st.secrets[name]
 
-gemini_client = genai.Client()  # GEMINI_API_KEY を環境変数から読む [web:437]
-
 
 gemini_client = genai.Client(api_key=env("GEMINI_API_KEY"))
+
 
 def get_dropbox_client():
     return dropbox.Dropbox(
@@ -44,6 +43,7 @@ def get_dropbox_client():
         app_key=env("DROPBOX_APP_KEY"),
         app_secret=env("DROPBOX_APP_SECRET"),
     )
+
 
 def get_credentials():
     return dict(
@@ -54,7 +54,6 @@ def get_credentials():
         aws_secret_key=env("AWS_SECRET_KEY"),
         role_arn=env("ROLE_ARN"),
     )
-
 
 
 # ---------------------------------------------------------
@@ -78,7 +77,7 @@ def extract_asin(text: str) -> str:
 
 
 def extract_jp_text_list(attr: dict, key: str) -> List[str]:
-    """attributes[key] から language_tag==ja_JP の value をリストで返す。 [web:447][web:448]"""
+    """attributes[key] から language_tag==ja_JP の value をリストで返す。"""
     values: List[str] = []
     items = attr.get(key) or []
     for v in items:
@@ -89,11 +88,8 @@ def extract_jp_text_list(attr: dict, key: str) -> List[str]:
 
 def fetch_amazon_item(asin: str) -> dict:
     """
-    仕様書1.3で必要な項目だけ取得。 [file:360]
-    - title: 日本語タイトル
-    - image_urls: 全画像URL
-    - price_jpy: 仕入れ価格
-    - jp_description: bullet_point + safety_warning
+    仕様書1.3で必要な項目だけ取得。
+    いまは調査用に raw_attributes も返す。 [file:468]
     """
     credentials = get_credentials()
 
@@ -109,7 +105,7 @@ def fetch_amazon_item(asin: str) -> dict:
             includedData=["summaries", "attributes", "images"],
         )
     except SellingApiException as e:
-        return {"asin": asin, "error": f"CatalogItems エラー: {e}"}
+        return {"asin": asin, "error": f"CatalogItems エラー: {e}", "detail": str(e)}
 
     payload = res.payload or {}
     summaries = payload.get("summaries", [])
@@ -130,13 +126,14 @@ def fetch_amazon_item(asin: str) -> dict:
                 image_urls.append(link)
         break
 
-    # 日本語商品説明
-    bullet_texts = extract_jp_text_list(attributes, "bullet_point")
-    safety_texts = extract_jp_text_list(attributes, "safety_warning")
-    jp_description = "\n".join(bullet_texts + safety_texts)
+    # ここでは jp_description はまだ組み立てない（あとでキーを検討）
+    # bullet_texts = extract_jp_text_list(attributes, "bullet_point")
+    # safety_texts = extract_jp_text_list(attributes, "safety_warning")
+    # jp_description = "\n".join(bullet_texts + safety_texts)
 
     # 価格（BuyBox）
     price_jpy = None
+    price_error = None
     try:
         pricing_client = Products(
             marketplace=Marketplaces.JP,
@@ -156,16 +153,18 @@ def fetch_amazon_item(asin: str) -> dict:
             currency = lp.get("CurrencyCode")
             if amount is not None and currency == "JPY":
                 price_jpy = float(amount)
-    except SellingApiException:
+    except SellingApiException as e:
         price_jpy = None
+        price_error = str(e)
 
-        return {
+    return {
         "asin": asin,
         "title": title,
         "image_urls": image_urls,
         "price_jpy": price_jpy,
-        # "jp_description": jp_description,  # ←いったんコメントアウト
-        "raw_attributes": attributes,        # ← 生データを返す
+        "raw_attributes": attributes,  # 生データ調査用
+        "price_error": price_error,
+        # "jp_description": jp_description,  # 後で復活させる
     }
 
 
@@ -174,9 +173,6 @@ def fetch_amazon_item(asin: str) -> dict:
 # ---------------------------------------------------------
 
 def calc_price_and_profit(country_code: str, jp_price: float, shipping_jpy: float, target_margin: float):
-    """
-    戻り値: (selling_jpy, profit_jpy) どちらも四捨五入済み
-    """
     fee = get_fee_rate(country_code)
     cost = jp_price + shipping_jpy
     denom = 1.0 - fee - target_margin
@@ -198,9 +194,6 @@ def save_images_to_dropbox(
     title: str,
     base_folder: str,
 ):
-    """
-    すべての画像URLを Dropbox に保存する。 [file:360]
-    """
     from urllib.parse import urlparse
 
     folder = f"/{base_folder.strip('/')}/{asin}"
@@ -236,6 +229,7 @@ def save_images_to_dropbox(
 
 # ---------------------------------------------------------
 # 翻訳テキスト保存 & Gemini
+# （翻訳自体はそのまま残しておく）
 # ---------------------------------------------------------
 
 def save_translation_to_dropbox(
@@ -243,24 +237,13 @@ def save_translation_to_dropbox(
     asin: str,
     jp_title: str,
     cost_price_jpy: int | float,
-    selling_local_str: str,   # 例: "28.7 SGD"
+    selling_local_str: str,
     selling_jpy: int | float,
     profit_jpy: int | float,
     translated_title: str,
     translated_description: str,
     base_folder: str,
 ) -> str:
-    """
-    txt 形式: [file:360]
-    日本語タイトル
-    仕入れ値: xxxx円
-    販売価格: xx.x SGD（yyyy円）
-    利益額: zzzz円
-    --------------------
-    翻訳タイトル
-    --------------------
-    商品説明の翻訳
-    """
     folder = f"/{base_folder.strip('/')}/{asin}"
 
     safe_title_head = jp_title[:10].replace("/", "_").replace("\\", "_")
@@ -288,7 +271,6 @@ def save_translation_to_dropbox(
 
 
 def call_gemini_api(prompt: str) -> str:
-    """Gemini 2.5 Flash でテキスト生成。 [web:437][web:438]"""
     response = gemini_client.models.generate_content(
         model="gemini-2.5-flash",
         contents=prompt,
@@ -301,7 +283,6 @@ def translate_with_gemini(
     jp_description: str,
     country: str,
 ) -> Tuple[str, str]:
-    """国ごとのターゲット言語に翻訳。 [file:360]"""
     target_lang = country_to_lang(country)
 
     prompt = f"""
@@ -343,7 +324,7 @@ def main():
 
     asin_or_url = st.text_input("ASIN / Amazon URL", value="")
 
-    # 送料初期値を500に [file:360]
+    # 送料初期値 500
     shipping_fee_str = st.text_input("送料（円）", value="500", placeholder="例: 500")
 
     try:
@@ -381,7 +362,11 @@ def main():
 
         if item is None or "error" in item:
             msg = item.get("error") if item else "不明なエラー"
-            error_placeholder.error(f"Amazon商品情報の取得に失敗しました: {msg}")
+            detail = item.get("detail")
+            if detail:
+                error_placeholder.error(f"{msg}\n詳細: {detail}")
+            else:
+                error_placeholder.error(f"Amazon商品情報の取得に失敗しました: {msg}")
             return
 
         with result_container:
@@ -393,16 +378,18 @@ def main():
                 st.image(item["image_urls"][0], caption="", width=200)
             else:
                 st.write("画像なし")
+
             st.markdown("### attributes 生データ（調査用）")
             st.json(item.get("raw_attributes", {}))
 
-            st.markdown("### 日本語商品説明（抽出結果・確認用）")
-            st.text_area(
-                "JP Description (readonly)",
-                item.get("jp_description", ""),
-                height=200,
-                disabled=True,
-            )
+            # jp_description は一旦オフ
+            # st.markdown("### 日本語商品説明（抽出結果・確認用）")
+            # st.text_area(
+            #     "JP Description (readonly)",
+            #     item.get("jp_description", ""),
+            #     height=200,
+            #     disabled=True,
+            # )
 
             st.markdown("---")
             st.subheader("利益計算結果")
@@ -445,7 +432,7 @@ def main():
             )
             st.write(f"利益額: {profit_rounded}円")
 
-        # セッション保存（保存ボタン用）
+        # セッション保存（翻訳用の jp_description はまだ持たない）
         st.session_state["last_item"] = item
         st.session_state["last_country_code"] = country_code
         st.session_state["last_shipping_fee"] = shipping_fee
@@ -455,7 +442,7 @@ def main():
         st.session_state["last_local_currency"] = local_currency
         st.session_state["last_cost_price"] = cost_price
         st.session_state["last_profit_jpy"] = profit_rounded
-        st.session_state["last_jp_description"] = item.get("jp_description", "")
+        # st.session_state["last_jp_description"] = item.get("jp_description", "")
 
     # ---- 保存 ----
     if save_clicked:
@@ -472,7 +459,8 @@ def main():
             local_currency = st.session_state.get("last_local_currency", "")
             cost_price = st.session_state.get("last_cost_price", 0)
             profit_rounded = st.session_state.get("last_profit_jpy", 0)
-            jp_description = st.session_state.get("last_jp_description", "")
+            # jp_description = st.session_state.get("last_jp_description", "")
+            jp_description = ""  # 調査中は空でOK
 
             if not image_urls:
                 error_placeholder.error("画像URLがないため、保存できません。")
@@ -482,7 +470,6 @@ def main():
                     base_folder = os.environ.get("DROPBOX_BASE_FOLDER", "ASIN2Shopee")
 
                     with st.spinner("画像・翻訳テキストをDropboxに保存中..."):
-                        # 1. 画像保存
                         paths = save_images_to_dropbox(
                             dbx=dbx,
                             image_urls=image_urls,
@@ -491,17 +478,14 @@ def main():
                             base_folder=base_folder,
                         )
 
-                        # 2. 翻訳生成
                         translated_title, translated_description = translate_with_gemini(
                             jp_title=title,
                             jp_description=jp_description,
                             country=country_code,
                         )
 
-                        # 通貨コード付きの販売価格文字列
                         selling_local_str = f"{local_price} {local_currency}"
 
-                        # 3. 翻訳テキスト保存
                         translation_path = save_translation_to_dropbox(
                             dbx=dbx,
                             asin=asin,
