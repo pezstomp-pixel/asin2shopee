@@ -159,12 +159,13 @@ def fetch_amazon_item(asin: str) -> dict:
     except SellingApiException:
         price_jpy = None
 
-    return {
+        return {
         "asin": asin,
         "title": title,
         "image_urls": image_urls,
         "price_jpy": price_jpy,
-        "jp_description": jp_description,
+        # "jp_description": jp_description,  # ←いったんコメントアウト
+        "raw_attributes": attributes,        # ← 生データを返す
     }
 
 
@@ -392,6 +393,8 @@ def main():
                 st.image(item["image_urls"][0], caption="", width=200)
             else:
                 st.write("画像なし")
+            st.markdown("### attributes 生データ（調査用）")
+            st.json(item.get("raw_attributes", {}))
 
             st.markdown("### 日本語商品説明（抽出結果・確認用）")
             st.text_area(
