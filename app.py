@@ -89,7 +89,7 @@ def extract_jp_text_list(attr: dict, key: str) -> List[str]:
 def fetch_amazon_item(asin: str) -> dict:
     """
     仕様書1.3で必要な項目だけ取得。
-    いまは調査用に raw_attributes も返す。 [file:468]
+    - title, image_urls, price_jpy, jp_description, raw_attributes [file:468]
     """
     credentials = get_credentials()
 
@@ -126,10 +126,16 @@ def fetch_amazon_item(asin: str) -> dict:
                 image_urls.append(link)
         break
 
-    # ここでは jp_description はまだ組み立てない（あとでキーを検討）
-    # bullet_texts = extract_jp_text_list(attributes, "bullet_point")
-    # safety_texts = extract_jp_text_list(attributes, "safety_warning")
-    # jp_description = "\n".join(bullet_texts + safety_texts)
+    # 日本語商品説明:
+    # 1. product_description（今回欲しかった長文）
+    # 2. bullet_point
+    # 3. safety_warning
+    product_desc = extract_jp_text_list(attributes, "product_description")
+    bullet_texts = extract_jp_text_list(attributes, "bullet_point")
+    safety_texts = extract_jp_text_list(attributes, "safety_warning")
+
+    jp_description_parts = product_desc + bullet_texts + safety_texts
+    jp_description = "\n".join(jp_description_parts)
 
     # 価格（BuyBox）
     price_jpy = None
@@ -162,9 +168,9 @@ def fetch_amazon_item(asin: str) -> dict:
         "title": title,
         "image_urls": image_urls,
         "price_jpy": price_jpy,
-        "raw_attributes": attributes,  # 生データ調査用
+        "raw_attributes": attributes,
         "price_error": price_error,
-        # "jp_description": jp_description,  # 後で復活させる
+        "jp_description": jp_description,
     }
 
 
@@ -229,7 +235,6 @@ def save_images_to_dropbox(
 
 # ---------------------------------------------------------
 # 翻訳テキスト保存 & Gemini
-# （翻訳自体はそのまま残しておく）
 # ---------------------------------------------------------
 
 def save_translation_to_dropbox(
@@ -324,7 +329,6 @@ def main():
 
     asin_or_url = st.text_input("ASIN / Amazon URL", value="")
 
-    # 送料初期値 500
     shipping_fee_str = st.text_input("送料（円）", value="500", placeholder="例: 500")
 
     try:
@@ -382,14 +386,13 @@ def main():
             st.markdown("### attributes 生データ（調査用）")
             st.json(item.get("raw_attributes", {}))
 
-            # jp_description は一旦オフ
-            # st.markdown("### 日本語商品説明（抽出結果・確認用）")
-            # st.text_area(
-            #     "JP Description (readonly)",
-            #     item.get("jp_description", ""),
-            #     height=200,
-            #     disabled=True,
-            # )
+            st.markdown("### 日本語商品説明（抽出結果・確認用）")
+            st.text_area(
+                "JP Description (readonly)",
+                item.get("jp_description", ""),
+                height=200,
+                disabled=True,
+            )
 
             st.markdown("---")
             st.subheader("利益計算結果")
@@ -432,7 +435,7 @@ def main():
             )
             st.write(f"利益額: {profit_rounded}円")
 
-        # セッション保存（翻訳用の jp_description はまだ持たない）
+        # セッション保存
         st.session_state["last_item"] = item
         st.session_state["last_country_code"] = country_code
         st.session_state["last_shipping_fee"] = shipping_fee
@@ -442,7 +445,7 @@ def main():
         st.session_state["last_local_currency"] = local_currency
         st.session_state["last_cost_price"] = cost_price
         st.session_state["last_profit_jpy"] = profit_rounded
-        # st.session_state["last_jp_description"] = item.get("jp_description", "")
+        st.session_state["last_jp_description"] = item.get("jp_description", "")
 
     # ---- 保存 ----
     if save_clicked:
@@ -459,8 +462,7 @@ def main():
             local_currency = st.session_state.get("last_local_currency", "")
             cost_price = st.session_state.get("last_cost_price", 0)
             profit_rounded = st.session_state.get("last_profit_jpy", 0)
-            # jp_description = st.session_state.get("last_jp_description", "")
-            jp_description = ""  # 調査中は空でOK
+            jp_description = st.session_state.get("last_jp_description", "")
 
             if not image_urls:
                 error_placeholder.error("画像URLがないため、保存できません。")
