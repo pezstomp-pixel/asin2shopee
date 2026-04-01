@@ -93,7 +93,6 @@ def fetch_amazon_item(asin: str) -> dict:
     """
     credentials = get_credentials()
 
-    # CatalogItems
     try:
         catalog_client = CatalogItems(
             marketplace=Marketplaces.JP,
@@ -115,7 +114,6 @@ def fetch_amazon_item(asin: str) -> dict:
     summary = summaries[0] if summaries else {}
     title = summary.get("itemName") or "取得できませんでした"
 
-    # 画像URL
     image_urls: List[str] = []
     for marketplace_images in images_per_marketplace:
         if marketplace_images.get("marketplaceId") != Marketplaces.JP.marketplace_id:
@@ -126,10 +124,6 @@ def fetch_amazon_item(asin: str) -> dict:
                 image_urls.append(link)
         break
 
-    # 日本語商品説明:
-    # 1. product_description
-    # 2. bullet_point
-    # 3. safety_warning
     product_desc = extract_jp_text_list(attributes, "product_description")
     bullet_texts = extract_jp_text_list(attributes, "bullet_point")
     safety_texts = extract_jp_text_list(attributes, "safety_warning")
@@ -137,7 +131,6 @@ def fetch_amazon_item(asin: str) -> dict:
     jp_description_parts = product_desc + bullet_texts + safety_texts
     jp_description = "\n".join(jp_description_parts)
 
-    # 価格（BuyBox）
     price_jpy = None
     price_error = None
     try:
@@ -289,7 +282,6 @@ def translate_with_gemini(
 ) -> Tuple[str, str]:
     target_lang = country_to_lang(country)
 
-    # jp_description のあとに空行1つ追加してから投げる
     jp_desc_with_blank = jp_description + "\n\n" if jp_description else ""
 
     prompt = f"""
@@ -329,24 +321,6 @@ def main():
     )
     country_code = COUNTRY_LABEL_TO_CODE[country_label]
 
-    if "asin_input" not in st.session_state:
-        st.session_state["asin_input"] = ""
-
-    def clear_asin_input():
-        st.session_state["asin_input"] = ""
-
-    col_asin, col_clear = st.columns([8, 1])
-
-    with col_asin:
-        st.text_input("ASIN / Amazon URL", key="asin_input")
-
-    with col_clear:
-        st.write("")
-        st.write("")
-        st.button("クリア", on_click=clear_asin_input)
-
-    asin_or_url = st.session_state["asin_input"]
-
     shipping_fee_str = st.text_input("送料（円）", value="500", placeholder="例: 500")
 
     try:
@@ -367,14 +341,17 @@ def main():
 
     st.markdown("---")
 
-    get_clicked = st.button("取得")
+    with st.form("asin_form", clear_on_submit=True):
+        asin_or_url = st.text_input("ASIN / Amazon URL")
+        get_clicked = st.form_submit_button("取得")
+
     result_container = st.container()
     save_clicked = st.button("保存")
     error_placeholder = st.empty()
 
-    # ---- 取得 ----
     if get_clicked:
         asin = extract_asin(asin_or_url)
+
         if not asin:
             error_placeholder.error("ASINまたは有効なAmazon商品URLを入力してください。")
             return
@@ -450,7 +427,6 @@ def main():
             )
             st.write(f"利益額: {profit_rounded}円")
 
-        # セッション保存
         st.session_state["last_item"] = item
         st.session_state["last_country_code"] = country_code
         st.session_state["last_shipping_fee"] = shipping_fee
@@ -462,7 +438,6 @@ def main():
         st.session_state["last_profit_jpy"] = profit_rounded
         st.session_state["last_jp_description"] = item.get("jp_description", "")
 
-    # ---- 保存 ----
     if save_clicked:
         if "last_item" not in st.session_state:
             error_placeholder.warning("先に取得ボタンで商品情報を取得してください。")
@@ -503,7 +478,7 @@ def main():
 
                         selling_local_str = f"{local_price} {local_currency}"
 
-                        translation_path = save_translation_to_dropbox(
+                        save_translation_to_dropbox(
                             dbx=dbx,
                             asin=asin,
                             jp_title=title,
