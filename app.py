@@ -329,7 +329,23 @@ def main():
     )
     country_code = COUNTRY_LABEL_TO_CODE[country_label]
 
-    asin_or_url = st.text_input("ASIN / Amazon URL", value="")
+    if "asin_input" not in st.session_state:
+        st.session_state["asin_input"] = ""
+
+    def clear_asin_input():
+        st.session_state["asin_input"] = ""
+
+    col_asin, col_clear = st.columns([8, 1])
+
+    with col_asin:
+        st.text_input("ASIN / Amazon URL", key="asin_input")
+
+    with col_clear:
+        st.write("")
+        st.write("")
+        st.button("クリア", on_click=clear_asin_input)
+
+    asin_or_url = st.session_state["asin_input"]
 
     shipping_fee_str = st.text_input("送料（円）", value="500", placeholder="例: 500")
 
